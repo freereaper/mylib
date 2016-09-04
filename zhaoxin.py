@@ -15,7 +15,7 @@ p4_project_prefix = "Source_New_"
 git_project_prefix = "zx-android-5.1.1_r4_"
 project_prefix = [p4_project_prefix, git_project_prefix]
 
-p4_project_name = ["ZX2000_DVB", "ZX2K_Android5_1_IPTV"] 
+p4_project_name = ["ZX2000_DVB", "ZX2K_Android5_1_IPTV"]
 git_project_name = ["ZX2000_DVB", "ZX2K_IPTV"]
 project_name = [p4_project_name, git_project_name]
 
