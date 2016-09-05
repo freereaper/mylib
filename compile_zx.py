@@ -15,6 +15,7 @@ import fileinput
 from optparse import OptionParser
 from zhaoxin import repo_set as repo
 from private import mypasswd
+from mythread import mythread
 
 result = {}
 
@@ -28,6 +29,11 @@ def process(module):
             return ret
         return wrapper
     return with_log
+
+def process_bar(progress):
+    bar = '█'
+    sys.stdout.write('\rbulding: %s' % (bar * progress))
+    sys.stdout.flush()
 
 def md5sum(filename):
     with open(filename, 'rb') as f:
@@ -74,8 +80,12 @@ def compile_kernel(branch, bsp, force):
         for line in fileinput.input("Makefile", inplace = True):
             print(re.sub(r"(^BSP_VERSION \?=) (\d{2}\.\d{2}\.\d{2}[a-zA-Z]?$)", r'\1 ' + bsp, line.rstrip()))
 
-        print("building....")
-        ret = spawn_exec("sudo ./build_zx2000.sh")
+        try:
+            thread = mythread(2, process_bar)
+            thread.start()
+            ret = spawn_exec("sudo ./build_zx2000.sh")
+        finally:
+            thread.stop()
 
     else:
         print("NOTICE: BSP Version unchanged, no need to compile kernel again\n")
@@ -90,14 +100,20 @@ def compile_kernel(branch, bsp, force):
 def compile_uboot(branch):
     os.chdir(repo[branch]["UBOOT"])
 
-    ret = spawn_exec("./build_zx2000.sh")
+    try:
+        thread = mythread(1, process_bar)
+        thread.start()
+        ret = spawn_exec("./build_zx2000.sh")
+    finally:
+        thread.stop()
+
     if ret != 0:
         result["u-boot.toc"] = "compile failed"
         print("\nERROR>> compile uboot error : %d" % ret)
         raise Exception("compile uboot error")
 
     os.chdir("../secureboot-zx2000/utils/SigningTool")
-    print("\nstart signing for the u-boot.bin\n")
+    print("\n\nstart signing for the u-boot.bin")
     ret = spawn_exec("sudo ./secureboot.py -f ../../../uboot -k keys.lt_eng -B u-boot.toc")
     if ret != 0:
         result["u-boot.toc"] = "signing failed"
@@ -118,13 +134,20 @@ def compile_uboot(branch):
 @process("hwc")
 def compile_hwc(branch):
     os.chdir(repo[branch]["HWC"])
-    ret = spawn_exec(r'sudo bash /home/reaper/mylib/build_hwc.sh %s' % repo[branch]["HWC"])
+
+    try:
+        thread = mythread(1, process_bar)
+        thread.start()
+        ret = spawn_exec(r'sudo bash /home/reaper/mylib/build_hwc.sh %s' % repo[branch]["HWC"])
+    finally:
+        thread.stop()
+
     if ret !=0:
         result["hwc_composer.zx2000.so"] = "compile failed"
         raise Exception("compile hwc failed")
 
     os.chdir("../../../../")
-    print('''md5info:
+    print('''\nmd5info:
              * hwcomposer.zx2000.so: %s
 
              copy....
@@ -140,15 +163,20 @@ def compile_drv(branch):
     for line in fileinput.input("build_arm.sh", inplace = True):
         print(re.sub(r"(^make) LINUXDIR=(\S+) (.*)", r'\1 LINUXDIR=' + repo[branch]["KERNEL"]  + r' \3', line.rstrip()))
 
-    time.sleep(3)
-    ret = spawn_exec("bash ./build_arm.sh")
+    try:
+        thread = mythread(1, process_bar)
+        thread.start()
+        ret = spawn_exec("bash ./build_arm.sh")
+    finally:
+        thread.stop()
+
     if ret != 0:
         print("ERROR>> compile driver error : %d" % ret)
         result["s3g.ko"]="compile failed"
         result["s3g_core.ko"]="compile failed"
         raise Exception("compile driver failed")
 
-    print('''md5info:
+    print('''\nmd5info:
              * s3g.ko: %s
              * s3g_core.ko: %s
 
@@ -261,6 +289,6 @@ if __name__ == "__main__" :
     except Exception as e:
         print(e)
     finally:
-        print("\n\n\n==================out================================")
+        print("\n\n\n=====================out================================")
         for key, value in result.items():
             print("%s:    %s" %(key, value))
