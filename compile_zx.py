@@ -7,11 +7,14 @@ import hashlib
 from functools import partial
 from functools import wraps
 from os import sys
+import pexpect
+import platform
 import time
 import shutil
 import fileinput
 from optparse import OptionParser
 from zhaoxin import repo_set as repo
+from private import mypasswd
 
 result = {}
 
@@ -33,6 +36,26 @@ def md5sum(filename):
             d.update(buf)
     return d.hexdigest()
 
+def spawn_exec(cmd):
+    osname = platform.system()
+    if osname == 'Linux':
+        prombt = r'\[sudo\] password for %s:' % os.environ['USER']
+    elif osname == 'Darwin':
+        prompt = 'Password:'
+    else:
+        assert False, osname
+
+    child = pexpect.spawnu(cmd, timeout=600)
+    idx = child.expect([prombt, pexpect.EOF, pexpect.TIMEOUT])
+    #child.logfile_read = sys.stdout
+    if idx == 0:
+        child.sendline(mypasswd)
+        child.expect(pexpect.EOF)
+    elif idx == 2:
+        raise Exception("exec %s timeout" % cmd)
+    child.close()
+    return (child.exitstatus)
+
 @process("kernel")
 def compile_kernel(branch, bsp, force):
     bsp_changed = False
@@ -51,8 +74,8 @@ def compile_kernel(branch, bsp, force):
         for line in fileinput.input("Makefile", inplace = True):
             print(re.sub(r"(^BSP_VERSION \?=) (\d{2}\.\d{2}\.\d{2}[a-zA-Z]?$)", r'\1 ' + bsp, line.rstrip()))
 
-        time.sleep(2)
-        ret = os.system("sudo ./build_zx2000.sh")
+        print("building....")
+        ret = spawn_exec("sudo ./build_zx2000.sh")
 
     else:
         print("NOTICE: BSP Version unchanged, no need to compile kernel again\n")
@@ -67,7 +90,7 @@ def compile_kernel(branch, bsp, force):
 def compile_uboot(branch):
     os.chdir(repo[branch]["UBOOT"])
 
-    ret = os.system("./build_zx2000.sh")
+    ret = spawn_exec("./build_zx2000.sh")
     if ret != 0:
         result["u-boot.toc"] = "compile failed"
         print("\nERROR>> compile uboot error : %d" % ret)
@@ -75,8 +98,13 @@ def compile_uboot(branch):
 
     os.chdir("../secureboot-zx2000/utils/SigningTool")
     print("\nstart signing for the u-boot.bin\n")
-    os.system("sudo ./secureboot.py -f ../../../uboot -k keys.lt_eng -B u-boot.toc")
-    print("\n**************************Signing uboot over*********************\n")
+    ret = spawn_exec("sudo ./secureboot.py -f ../../../uboot -k keys.lt_eng -B u-boot.toc")
+    if ret != 0:
+        result["u-boot.toc"] = "signing failed"
+        print("\nERROR>> signing uboot error : %d" % ret)
+        raise Exception("signing uboot error")
+
+    print("Signing uboot over.\n")
 
     print('''md5info:
              * u-boot.toc: %s
@@ -90,7 +118,7 @@ def compile_uboot(branch):
 @process("hwc")
 def compile_hwc(branch):
     os.chdir(repo[branch]["HWC"])
-    ret = os.system(r'sudo bash /home/reaper/mylib/build_hwc.sh %s' % repo[branch]["HWC"])
+    ret = spawn_exec(r'sudo bash /home/reaper/mylib/build_hwc.sh %s' % repo[branch]["HWC"])
     if ret !=0:
         result["hwc_composer.zx2000.so"] = "compile failed"
         raise Exception("compile hwc failed")
@@ -113,7 +141,7 @@ def compile_drv(branch):
         print(re.sub(r"(^make) LINUXDIR=(\S+) (.*)", r'\1 LINUXDIR=' + repo[branch]["KERNEL"]  + r' \3', line.rstrip()))
 
     time.sleep(3)
-    ret = os.system("./build_arm.sh")
+    ret = spawn_exec("bash ./build_arm.sh")
     if ret != 0:
         print("ERROR>> compile driver error : %d" % ret)
         result["s3g.ko"]="compile failed"
