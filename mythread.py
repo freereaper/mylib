@@ -9,14 +9,20 @@ class mythread(threading.Thread):
         self.interval = interval
         self.thread_stop = False
         self.realrun = realrun
+        self.cnt = 0
+        self.normal_exit = 0
 
     def run(self):
-        cnt = 1
         while not self.thread_stop:
-            #TODO
-            self.realrun(cnt)
-            cnt = cnt + 1
+            self.cnt = self.cnt + 1
+            self.realrun(self.cnt, '')
             time.sleep(self.interval)
 
-    def stop(self):
+        if self.normal_exit == 1:
+            self.realrun(self.cnt, r'[100%]')
+        print("\n")
+
+    def stop(self, flag):
         self.thread_stop = True
+        if flag == 0:
+            self.normal_exit = 1

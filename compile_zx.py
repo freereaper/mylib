@@ -18,6 +18,7 @@ from private import mypasswd
 from mythread import mythread
 
 result = {}
+en_log = False
 
 def process(module):
     def with_log(func):
@@ -30,9 +31,9 @@ def process(module):
         return wrapper
     return with_log
 
-def process_bar(progress):
+def process_bar(progress, over):
     bar = '█'
-    sys.stdout.write('\rbulding: %s' % (bar * progress))
+    sys.stdout.write('\rbulding: %s %s' % (bar * progress, over))
     sys.stdout.flush()
 
 def md5sum(filename):
@@ -53,19 +54,18 @@ def spawn_exec(cmd):
 
     child = pexpect.spawnu(cmd, timeout=600)
     idx = child.expect([prombt, pexpect.EOF, pexpect.TIMEOUT])
-    #child.logfile_read = sys.stdout
     if idx == 0:
         child.sendline(mypasswd)
         child.expect(pexpect.EOF)
     elif idx == 2:
         raise Exception("exec %s timeout" % cmd)
     child.close()
-    return (child.exitstatus)
+    return (child.exitstatus, child.before)
 
 @process("kernel")
 def compile_kernel(branch, bsp, force):
     bsp_changed = False
-    ret = 0
+    ret = 1
     pattern = r"(^BSP_VERSION \?=) (\d{2}\.\d{2}\.\d{2}[a-zA-Z]?$)"
     result["kernel"] = bsp
     os.chdir(repo[branch]["KERNEL"])
@@ -83,11 +83,15 @@ def compile_kernel(branch, bsp, force):
         try:
             thread = mythread(2, process_bar)
             thread.start()
-            ret = spawn_exec("sudo ./build_zx2000.sh")
+            (ret,log) = spawn_exec("sudo ./build_zx2000.sh")
         finally:
-            thread.stop()
+            thread.stop(ret)
+            thread.join()
+            if en_log == True:
+                print(log)
 
     else:
+        ret = 0
         print("NOTICE: BSP Version unchanged, no need to compile kernel again\n")
         time.sleep(2)
 
@@ -98,14 +102,21 @@ def compile_kernel(branch, bsp, force):
 
 @process("uboot")
 def compile_uboot(branch):
+    ret = 1
+
     os.chdir(repo[branch]["UBOOT"])
 
     try:
-        thread = mythread(1, process_bar)
+        thread = mythread(0.5, process_bar)
         thread.start()
-        ret = spawn_exec("./build_zx2000.sh")
+        (ret, log) = spawn_exec("./build_zx2000.sh")
     finally:
-        thread.stop()
+        thread.stop(ret)
+        thread.join()
+        if en_log == True:
+            print(log)
+
+
 
     if ret != 0:
         result["u-boot.toc"] = "compile failed"
@@ -114,7 +125,7 @@ def compile_uboot(branch):
 
     os.chdir("../secureboot-zx2000/utils/SigningTool")
     print("\n\nstart signing for the u-boot.bin")
-    ret = spawn_exec("sudo ./secureboot.py -f ../../../uboot -k keys.lt_eng -B u-boot.toc")
+    (ret, log) = spawn_exec("sudo ./secureboot.py -f ../../../uboot -k keys.lt_eng -B u-boot.toc")
     if ret != 0:
         result["u-boot.toc"] = "signing failed"
         print("\nERROR>> signing uboot error : %d" % ret)
@@ -133,21 +144,26 @@ def compile_uboot(branch):
 
 @process("hwc")
 def compile_hwc(branch):
+    ret = 1
     os.chdir(repo[branch]["HWC"])
 
     try:
         thread = mythread(1, process_bar)
         thread.start()
-        ret = spawn_exec(r'sudo bash /home/reaper/mylib/build_hwc.sh %s' % repo[branch]["HWC"])
+        (ret,log) = spawn_exec(r'sudo bash /home/reaper/mylib/build_hwc.sh %s' % repo[branch]["HWC"])
     finally:
-        thread.stop()
+        thread.stop(ret)
+        thread.join()
+        if en_log == True:
+            print(log)
+
 
     if ret !=0:
         result["hwc_composer.zx2000.so"] = "compile failed"
         raise Exception("compile hwc failed")
 
     os.chdir("../../../../")
-    print('''\nmd5info:
+    print('''\n\nmd5info:
              * hwcomposer.zx2000.so: %s
 
              copy....
@@ -158,17 +174,21 @@ def compile_hwc(branch):
 
 @process("driver")
 def compile_drv(branch):
+    ret = 1
     os.chdir(repo[branch]["CBIOS"])
 
     for line in fileinput.input("build_arm.sh", inplace = True):
         print(re.sub(r"(^make) LINUXDIR=(\S+) (.*)", r'\1 LINUXDIR=' + repo[branch]["KERNEL"]  + r' \3', line.rstrip()))
 
     try:
-        thread = mythread(1, process_bar)
+        thread = mythread(0.1, process_bar)
         thread.start()
-        ret = spawn_exec("bash ./build_arm.sh")
+        (ret, log) = spawn_exec("bash ./build_arm.sh")
     finally:
-        thread.stop()
+        thread.stop(ret)
+        thread.join()
+        if en_log == True:
+            print(log)
 
     if ret != 0:
         print("ERROR>> compile driver error : %d" % ret)
@@ -229,6 +249,12 @@ def get_option():
                       type='string',
                       dest='bsp_version',
                       help=('the version of the bsp'))
+    parser.add_option('-l',
+                      '--log',
+                      action='store_true',
+                      default=False,
+                      dest='log',
+                      help=('print the compile log or not'))
 
 
     (options, args) = parser.parse_args();
@@ -242,6 +268,7 @@ def OnOff(switch):
 
 if __name__ == "__main__" :
     options, help = get_option()
+    en_log = options.log
 
     if options.bsp_version is None:
         help()
@@ -257,17 +284,17 @@ if __name__ == "__main__" :
         help()
         sys.exit()
 
-    print("==================================================")
-    print("Compile settings:")
-    print("     branch      : %s" % options.branch)
-    print("     bsp version : %s" % options.bsp_version)
-    print("     dirver      : %s" % OnOff(options.driver))
-    print("     kernel      : %s" % OnOff(options.kernel))
-    print("     uboot       : %s" % OnOff(options.uboot))
-    print("     hwc         : %s" % OnOff(options.hwc))
-    print("==================================================")
+    print("==================================================================================================")
+    print("                             Compile settings:")
+    print("                             branch      : %s" % options.branch)
+    print("                             bsp version : %s" % options.bsp_version)
+    print("                             dirver      : %s" % OnOff(options.driver))
+    print("                             kernel      : %s" % OnOff(options.kernel))
+    print("                             uboot       : %s" % OnOff(options.uboot))
+    print("                             hwc         : %s" % OnOff(options.hwc))
+    print("=================================================================================================")
 
-    time.sleep(5)
+    time.sleep(2)
 
     try:
         if options.kernel:
@@ -289,6 +316,7 @@ if __name__ == "__main__" :
     except Exception as e:
         print(e)
     finally:
-        print("\n\n\n=====================out================================")
+        print("\n=========================================out============================================")
         for key, value in result.items():
-            print("%s:    %s" %(key, value))
+            print("                        %s:    %s" %(key, value))
+        print("=========================================out============================================\n")
