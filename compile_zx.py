@@ -13,12 +13,13 @@ import time
 import shutil
 import fileinput
 from optparse import OptionParser
-from zhaoxin import repo_set as repo
+#from zhaoxin import repo_set as repo
 from private import mypasswd
 from mythread import mythread
 
 result = {}
 en_log = False
+repo = {}
 
 def process(module):
     def with_log(func):
@@ -212,7 +213,7 @@ def get_option():
     parser = OptionParser("usage: %prog [options] <branch> <bsp_version>", version="%prog 1.0")
     parser.add_option('-b',
                       '--branch',
-                      choices=repo["BRANCH"],
+                      type='string',
                       help=('Specify the branch'))
     parser.add_option('-d',
                       '--driver',
@@ -249,6 +250,12 @@ def get_option():
                       type='string',
                       dest='bsp_version',
                       help=('the version of the bsp'))
+    parser.add_option('-r',
+                      '--repo',
+                      type='string',
+                      dest='repo',
+                      default="zhaoxin",
+                      help=('from which module to load your repo setting'))
     parser.add_option('-l',
                       '--log',
                       action='store_true',
@@ -268,6 +275,18 @@ def OnOff(switch):
 
 if __name__ == "__main__" :
     options, help = get_option()
+
+    try:
+       repo_module = __import__(options.repo)
+       repo_set = getattr(repo_module, "repo_set")
+
+    except (ImportError, NameError):
+        print(r"repo_set from %s.py can not be found" % options.repo)
+        help()
+        sys.exit()
+
+    repo = repo_set
+
     en_log = options.log
 
     if options.bsp_version is None:
