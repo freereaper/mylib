@@ -1,4 +1,4 @@
-#!/usr/bin/env python3
+#!/usr/bin/env python
 # -*- coding: utf-8 -*-
 
 import re
@@ -214,6 +214,7 @@ def get_option():
     parser.add_option('-b',
                       '--branch',
                       type='string',
+                      metavar=('[DVB|IPTV]'),
                       help=('Specify the branch'))
     parser.add_option('-d',
                       '--driver',
